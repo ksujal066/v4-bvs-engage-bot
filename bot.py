@@ -484,6 +484,7 @@ async def tweet_command(
     desc_parts.append(f"\n**Tasks:** {tasks_line}")
     desc_parts.append(f"**Reward:** `{points} points`")
     desc_parts.append(f"**Ends:** {format_timestamp(ends_at)}")
+    desc_parts.append(f"**Quest ID:** `#{tweet_db_id}`")
 
     embed = discord.Embed(
         description="\n".join(desc_parts),
@@ -504,7 +505,7 @@ async def tweet_command(
     if preview.get("image"):
         embed.set_image(url=preview["image"])
 
-    embed.set_footer(text="Powered by Engage Bot")
+    embed.set_footer(text=f"Quest #{tweet_db_id} · Powered by Engage Bot")
 
     # ---- Buttons: Like / Comment / Retweet (open tweet) + Collect ----
     view = ClaimView(tweet_db_id, points, ends_at, types=types)
