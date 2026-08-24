@@ -354,7 +354,7 @@ class EngageBot(commands.Bot):
 
         activity = discord.Activity(
             type=discord.ActivityType.watching,
-            name="tweet engagement | /tweet"
+            name="tweet engagement|/help_engage"
         )
         await self.change_presence(activity=activity)
 
