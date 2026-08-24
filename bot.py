@@ -379,11 +379,7 @@ bot = EngageBot()
 @app_commands.choices(type=[
     app_commands.Choice(name="Like", value="like"),
     app_commands.Choice(name="Comment (Reply)", value="reply"),
-    app_commands.Choice(name="Retweet", value="retweet"),
     app_commands.Choice(name="Like + Comment", value="like,reply"),
-    app_commands.Choice(name="Like + Retweet", value="like,retweet"),
-    app_commands.Choice(name="Comment + Retweet", value="reply,retweet"),
-    app_commands.Choice(name="All (Like + Comment + Retweet)", value="like,retweet,reply"),
 ])
 @app_commands.choices(duration=[
     app_commands.Choice(name="30 minutes", value=30),
@@ -468,8 +464,6 @@ async def tweet_command(
         tasks_bits.append("❤️ Like")
     if "reply" in types:
         tasks_bits.append("💬 Comment")
-    if "retweet" in types:
-        tasks_bits.append("🔁 Retweet")
     tasks_line = " · ".join(tasks_bits) if tasks_bits else types
 
     # Build description like a real tweet card
@@ -507,10 +501,9 @@ async def tweet_command(
 
     embed.set_footer(text=f"Quest #{tweet_db_id} · Powered by Engage Bot")
 
-    # ---- Buttons: Like / Comment / Retweet (open tweet) + Collect ----
+    # ---- Buttons: Like / Comment (open tweet) + Collect ----
     view = ClaimView(tweet_db_id, points, ends_at, types=types)
 
-    # Link buttons (same tweet URL — user does the action on X)
     view.add_item(discord.ui.Button(
         style=discord.ButtonStyle.link,
         label="Like",
@@ -523,13 +516,6 @@ async def tweet_command(
         label="Comment",
         url=clean_url,
         emoji="💬",
-        row=1
-    ))
-    view.add_item(discord.ui.Button(
-        style=discord.ButtonStyle.link,
-        label="Retweet",
-        url=clean_url,
-        emoji="🔁",
         row=1
     ))
 
