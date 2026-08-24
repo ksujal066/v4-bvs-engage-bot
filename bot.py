@@ -50,6 +50,57 @@ def format_timestamp(ts: float) -> str:
     return f"<t:{int(ts)}:R>"
 
 
+async def fetch_tweet_preview(username: str, tweet_id: str) -> dict:
+    """
+    Fetch tweet text, avatar, and image via public vxtwitter API (no X API key).
+    Returns dict with keys: text, author, avatar, image (may be None).
+    """
+    import aiohttp
+
+    url = f"https://api.vxtwitter.com/{username}/status/{tweet_id}"
+    result = {"text": None, "author": username, "avatar": None, "image": None}
+    try:
+        timeout = aiohttp.ClientTimeout(total=8)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url, headers={"User-Agent": "EngageBot/1.0"}) as resp:
+                if resp.status != 200:
+                    return result
+                data = await resp.json()
+    except Exception as e:
+        print(f"Tweet preview fetch failed: {e}")
+        return result
+
+    result["text"] = data.get("text") or data.get("tweet") or None
+    result["author"] = data.get("user_name") or data.get("username") or username
+
+    # Avatar
+    result["avatar"] = (
+        data.get("user_profile_image_url")
+        or data.get("profile_image_url")
+        or data.get("user_profile_image_url_https")
+    )
+    if result["avatar"] and "_normal" in result["avatar"]:
+        result["avatar"] = result["avatar"].replace("_normal", "_400x400")
+
+    # Image / thumbnail
+    media_ext = data.get("media_extended") or []
+    if media_ext and isinstance(media_ext, list):
+        first = media_ext[0]
+        result["image"] = first.get("thumbnail_url") or first.get("url")
+    if not result["image"]:
+        media_urls = data.get("mediaURLs") or []
+        if media_urls:
+            # Prefer image over video mp4 for embed thumbnail
+            for m in media_urls:
+                if any(m.lower().endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".webp")):
+                    result["image"] = m
+                    break
+            if not result["image"]:
+                result["image"] = media_urls[0]
+
+    return result
+
+
 # --------------- Views / Buttons ---------------
 
 def extract_twitter_username_from_url(url: str) -> Optional[str]:
@@ -409,7 +460,9 @@ async def tweet_command(
         content_lines.append(ping_role.mention)
     content = "\n".join(content_lines)
 
-    # ---- Embed (tweet card style) ----
+    # ---- Fetch real tweet text + image thumbnail ----
+    preview = await fetch_tweet_preview(username, tweet_id)
+
     tasks_bits = []
     if "like" in types:
         tasks_bits.append("❤️ Like")
@@ -419,21 +472,38 @@ async def tweet_command(
         tasks_bits.append("🔁 Retweet")
     tasks_line = " · ".join(tasks_bits) if tasks_bits else types
 
+    # Build description like a real tweet card
+    tweet_text = preview.get("text") or ""
+    if len(tweet_text) > 400:
+        tweet_text = tweet_text[:397] + "..."
+
+    desc_parts = []
+    if tweet_text:
+        desc_parts.append(tweet_text)
+    desc_parts.append(f"\n[Open this post on X]({clean_url})")
+    desc_parts.append(f"\n**Tasks:** {tasks_line}")
+    desc_parts.append(f"**Reward:** `{points} points`")
+    desc_parts.append(f"**Ends:** {format_timestamp(ends_at)}")
+
     embed = discord.Embed(
-        description=(
-            f"**@{username}**\n\n"
-            f"[Open this post on X]({clean_url})\n\n"
-            f"**Tasks:** {tasks_line}\n"
-            f"**Reward:** `{points} points`\n"
-            f"**Ends:** {format_timestamp(ends_at)}"
-        ),
+        description="\n".join(desc_parts),
         color=0x1DA1F2
     )
-    embed.set_author(
-        name=username,
-        url=f"https://x.com/{username}",
-        icon_url="https://abs.twimg.com/sticky/default_profile_images/default_profile_400x400.png"
+
+    author_name = preview.get("author") or username
+    avatar = preview.get("avatar") or (
+        "https://abs.twimg.com/sticky/default_profile_images/default_profile_400x400.png"
     )
+    embed.set_author(
+        name=f"{author_name}",
+        url=f"https://x.com/{username}",
+        icon_url=avatar
+    )
+
+    # Big thumbnail / image from the X post
+    if preview.get("image"):
+        embed.set_image(url=preview["image"])
+
     embed.set_footer(text="Powered by Engage Bot")
 
     # ---- Buttons: Like / Comment / Retweet (open tweet) + Collect ----
