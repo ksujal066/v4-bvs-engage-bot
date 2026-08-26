@@ -332,18 +332,20 @@ class EngageBot(commands.Bot):
     async def setup_hook(self):
         await db.init_db()
         self.cleanup_task.start()
-        # Global sync (can be slow). Guild sync is done in on_ready for instant update.
-        try:
-            await self.tree.sync()
-            print("Global slash commands synced.")
-        except Exception as e:
-            print(f"Global sync warning: {e}")
+        # Do NOT global-sync here. Mixing global + guild sync duplicates every command.
 
     async def on_ready(self):
         print(f"Logged in as {self.user} (ID: {self.user.id})")
         print("------")
 
-        # Instant guild-specific sync so new commands appear immediately
+        # Wipe globally registered commands so Discord stops showing duplicates.
+        # Commands stay defined on the tree; they are only published per-guild.
+        try:
+            await self.http.bulk_upsert_global_commands(self.application_id, [])
+            print("Cleared global slash commands (fixes duplicate /commands).")
+        except Exception as e:
+            print(f"Could not clear global commands: {e}")
+
         for guild in self.guilds:
             try:
                 self.tree.copy_global_to(guild=guild)
@@ -354,7 +356,7 @@ class EngageBot(commands.Bot):
 
         activity = discord.Activity(
             type=discord.ActivityType.watching,
-            name="tweet engagement|/help_engage"
+            name="tweet engagement | /tweet"
         )
         await self.change_presence(activity=activity)
 
@@ -795,21 +797,21 @@ async def sync_command(interaction: discord.Interaction):
     """Force Discord to reload all slash commands (instant for this server)."""
     await interaction.response.defer(ephemeral=True)
     try:
-        # Instant guild sync
+        # Instant guild sync only (global + guild = duplicate commands in Discord)
         bot.tree.copy_global_to(guild=interaction.guild)
         synced = await bot.tree.sync(guild=interaction.guild)
 
-        # Also try global (optional)
+        # Remove leftover global copies so each command appears once
         try:
-            await bot.tree.sync()
+            await bot.http.bulk_upsert_global_commands(bot.application_id, [])
         except Exception:
             pass
 
         cmd_names = [cmd.name for cmd in synced]
         await interaction.followup.send(
-            f"✅ Synced **{len(synced)}** commands to this server!\n"
+            f"✅ Synced **{len(synced)}** commands to this server (duplicates cleared).\n"
             f"Commands: `{', '.join(cmd_names)}`\n\n"
-            f"Type `/` again — you should now see **/set**",
+            f"Type `/` again — each command should appear **once**.",
             ephemeral=True
         )
     except Exception as e:
