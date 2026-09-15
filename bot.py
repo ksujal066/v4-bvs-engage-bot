@@ -646,6 +646,81 @@ async def leaderboard_command(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 
+PER_PAGE = 15
+
+
+def _format_user_list(guild: discord.Guild, rows: list, page: int) -> discord.Embed:
+    start = page * PER_PAGE
+    chunk = rows[start:start + PER_PAGE]
+    total_pages = max(1, (len(rows) + PER_PAGE - 1) // PER_PAGE)
+    total_points = sum(r["points"] for r in rows)
+
+    lines = []
+    for i, row in enumerate(chunk, start=start + 1):
+        user = guild.get_member(row["user_id"]) if guild else None
+        name = user.display_name if user else f"User {row['user_id']}"
+        handle = f"@{row['twitter_handle']}" if row.get("twitter_handle") else "—"
+        lines.append(
+            f"`#{i}` **{name}** — **{row['points']}** pts "
+            f"(earned {row['total_earned']} · {row['tweets_engaged']} quests) · `{handle}`"
+        )
+
+    embed = discord.Embed(
+        title="📋 All User Points",
+        description="\n".join(lines) if lines else "No users yet.",
+        color=0x5865F2
+    )
+    embed.set_footer(
+        text=f"Page {page + 1}/{total_pages} · {len(rows)} users · {total_points} points in circulation"
+    )
+    return embed
+
+
+class UserListView(discord.ui.View):
+    def __init__(self, rows: list, guild: discord.Guild, page: int = 0):
+        super().__init__(timeout=180)
+        self.rows = rows
+        self.guild = guild
+        self.page = page
+        self.total_pages = max(1, (len(rows) + PER_PAGE - 1) // PER_PAGE)
+        self._update_buttons()
+
+    def _update_buttons(self):
+        self.prev_btn.disabled = self.page <= 0
+        self.next_btn.disabled = self.page >= self.total_pages - 1
+
+    @discord.ui.button(label="◀ Prev", style=discord.ButtonStyle.secondary)
+    async def prev_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page = max(0, self.page - 1)
+        self._update_buttons()
+        await interaction.response.edit_message(
+            embed=_format_user_list(self.guild, self.rows, self.page),
+            view=self
+        )
+
+    @discord.ui.button(label="Next ▶", style=discord.ButtonStyle.secondary)
+    async def next_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page = min(self.total_pages - 1, self.page + 1)
+        self._update_buttons()
+        await interaction.response.edit_message(
+            embed=_format_user_list(self.guild, self.rows, self.page),
+            view=self
+        )
+
+
+@bot.tree.command(name="list", description="List all users and their points")
+@app_commands.default_permissions(manage_messages=True)
+async def list_command(interaction: discord.Interaction):
+    rows = await db.get_all_users(interaction.guild_id)
+    if not rows:
+        await interaction.response.send_message("No users have points yet.", ephemeral=True)
+        return
+
+    embed = _format_user_list(interaction.guild, rows, 0)
+    view = UserListView(rows, interaction.guild, 0) if len(rows) > PER_PAGE else None
+    await interaction.response.send_message(embed=embed, view=view)
+
+
 @bot.tree.command(name="stats", description="Show server engagement stats")
 async def stats_command(interaction: discord.Interaction):
     gstats = await db.get_guild_stats(interaction.guild_id)
@@ -833,6 +908,7 @@ async def help_command(interaction: discord.Interaction):
         value=(
             "`/tweet` — Create a new tweet quest\n"
             "Options: **link**, **type**, **duration**, **points**, **ping_role**\n\n"
+            "`/list` — See all users and their points\n"
             "`/claims` — View claims + proof links\n"
             "`/adjustpoints` — Manually add/remove points\n"
             "`/stats` — Server-wide engagement stats\n"
