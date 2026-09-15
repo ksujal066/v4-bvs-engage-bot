@@ -866,6 +866,117 @@ async def adjustpoints_command(
     await interaction.response.send_message(embed=embed)
 
 
+MENTION_RE = re.compile(r"<@!?(\d+)>")
+ID_RE = re.compile(r"\b(\d{17,20})\b")
+
+
+def _parse_user_ids(text: str) -> list:
+    ids = []
+    seen = set()
+    for m in MENTION_RE.finditer(text or ""):
+        uid = int(m.group(1))
+        if uid not in seen:
+            seen.add(uid)
+            ids.append(uid)
+    for m in ID_RE.finditer(text or ""):
+        uid = int(m.group(1))
+        if uid not in seen:
+            seen.add(uid)
+            ids.append(uid)
+    return ids
+
+
+@bot.tree.command(name="bulkadd", description="Admin: add or remove points for many users at once")
+@app_commands.describe(
+    amount="Points to add (use a negative number to remove)",
+    users="Mentions or IDs, separated by space — e.g. @Alice @Bob",
+    role="Optional: give points to everyone with this role",
+    reason="Optional reason"
+)
+@app_commands.default_permissions(administrator=True)
+async def bulkadd_command(
+    interaction: discord.Interaction,
+    amount: int,
+    users: Optional[str] = None,
+    role: Optional[discord.Role] = None,
+    reason: Optional[str] = None
+):
+    if amount == 0:
+        await interaction.response.send_message("Amount cannot be zero.", ephemeral=True)
+        return
+    if not users and not role:
+        await interaction.response.send_message(
+            "Provide **users** (mentions/IDs) and/or a **role**.",
+            ephemeral=True
+        )
+        return
+
+    await interaction.response.defer()
+
+    target_ids = []
+    seen = set()
+
+    if users:
+        for uid in _parse_user_ids(users):
+            if uid not in seen:
+                seen.add(uid)
+                target_ids.append(uid)
+
+    if role:
+        for member in role.members:
+            if member.bot:
+                continue
+            if member.id not in seen:
+                seen.add(member.id)
+                target_ids.append(member.id)
+
+    target_ids = [uid for uid in target_ids if uid != interaction.client.user.id]
+
+    if not target_ids:
+        await interaction.followup.send("No valid users found.", ephemeral=True)
+        return
+
+    MAX_BULK = 75
+    truncated = False
+    if len(target_ids) > MAX_BULK:
+        target_ids = target_ids[:MAX_BULK]
+        truncated = True
+
+    results = []
+    for uid in target_ids:
+        data = await db.get_user(uid, interaction.guild_id)
+        new_points = max(0, data["points"] + amount)
+        await db.set_points(uid, interaction.guild_id, new_points)
+        member = interaction.guild.get_member(uid)
+        name = member.display_name if member else str(uid)
+        results.append((name, new_points))
+
+    action = "Added" if amount > 0 else "Removed"
+    lines = [f"• **{name}** → `{pts}` pts" for name, pts in results[:25]]
+    extra = f"\n…and {len(results) - 25} more" if len(results) > 25 else ""
+
+    desc = (
+        f"{action} **{abs(amount)}** points "
+        f"{'to' if amount > 0 else 'from'} **{len(results)}** user(s).\n\n"
+        + "\n".join(lines) + extra
+    )
+    if truncated:
+        desc += f"\n\n⚠️ Capped at {MAX_BULK} users this run."
+
+    embed = discord.Embed(
+        title="📦 Bulk Points Update",
+        description=desc,
+        color=0x57F287 if amount > 0 else 0xED4245
+    )
+    if role:
+        embed.add_field(name="Role", value=role.mention, inline=True)
+    if reason:
+        embed.add_field(name="Reason", value=reason, inline=False)
+    embed.set_footer(text=f"By {interaction.user.display_name}")
+
+    await interaction.followup.send(embed=embed)
+
+
 @bot.tree.command(name="sync", description="Force refresh all slash commands (Admin only)")
 @app_commands.default_permissions(administrator=True)
 async def sync_command(interaction: discord.Interaction):
@@ -909,8 +1020,9 @@ async def help_command(interaction: discord.Interaction):
             "`/tweet` — Create a new tweet quest\n"
             "Options: **link**, **type**, **duration**, **points**, **ping_role**\n\n"
             "`/list` — See all users and their points\n"
+            "`/adjustpoints` — Add/remove points for one user\n"
+            "`/bulkadd` — Add/remove points for many users or a role\n"
             "`/claims` — View claims + proof links\n"
-            "`/adjustpoints` — Manually add/remove points\n"
             "`/stats` — Server-wide engagement stats\n"
             "`/active` — List running quests\n"
             "`/sync` — Refresh slash commands"
