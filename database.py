@@ -155,10 +155,24 @@ async def get_leaderboard(guild_id: int, limit: int = 10) -> List[Dict]:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            """SELECT user_id, points, total_earned, tweets_engaged
+            """SELECT user_id, points, total_earned, tweets_engaged, twitter_handle
                FROM users WHERE guild_id = ?
                ORDER BY points DESC LIMIT ?""",
             (guild_id, limit)
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
+
+async def get_all_users(guild_id: int) -> List[Dict]:
+    """All users in this guild, highest points first."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT user_id, points, total_earned, tweets_engaged, twitter_handle
+               FROM users WHERE guild_id = ?
+               ORDER BY points DESC, total_earned DESC""",
+            (guild_id,)
         ) as cursor:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
